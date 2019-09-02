@@ -33,7 +33,7 @@ dataroot = "./ImageNet/content/train"#/ships" #'/content/drive/My Drive/gans_wor
 #https://stackoverflow.com/questions/54613573/runtimeerror-found-0-files-in-subfolders-of-error-about-subfolder-in-pytor
 
 # Number of workers for dataloader
-workers = 0#4
+workers = 4
 #setting workers to 0 seems to have fixed the "RuntimeError: DataLoader worker (pid(s) [bla bla]) exited unexpectedly"
 # fix from here: https://github.com/pytorch/pytorch/issues/5301
 
@@ -57,7 +57,7 @@ ngf = 64
 ndf = 64
 
 # Number of training epochs
-num_epochs = 5
+num_epochs = 50
 
 # Learning rate for optimizers
 lr = 0.0002
@@ -355,6 +355,20 @@ plt.show()
 
 
 # Code to create an animation from your sampled interpolation
+
+#@title Interpolation solution {display-mode: "form"}
+
+imgs = []
+values = np.arange(0, 1, 1./64)
+for idx in range(nz):
+  z = np.random.uniform(-0.2, 0.2, size=(nz))
+  z_sample = np.tile(z, (64, 1))
+  for kdx, z in enumerate(z_sample):
+    z[idx] = values[kdx]
+  #print("z: ", z_sample.shape)
+  with torch.no_grad():
+    fake = netG(torch.from_numpy(z_sample.reshape((64, 100, 1, 1))).float().to(device)).detach().cpu()
+  imgs.append(vutils.make_grid(fake, padding=2, normalize=True))
 
 #%%capture
 fig = plt.figure(figsize=(8,8))

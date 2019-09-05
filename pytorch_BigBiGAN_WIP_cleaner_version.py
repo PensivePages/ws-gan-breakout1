@@ -57,7 +57,7 @@ ngf = 64
 ndf = 64
 
 # Number of training epochs
-num_epochs = 5#50#5
+num_epochs = 30#5
 
 # Learning rate for optimizers
 lr = 0.0002
@@ -72,14 +72,14 @@ ngpu = 1
 #channels = # may use this later when I switch to dims * dims
 
 # H (unary: E(x), z) Linear discriminator dims
-h_input_size = 12800 #--!!--NOTICE-- this is the flattening of the concatenated latent spaces - should really be coded to dims * dims    
-h_hidden_size = 6560 # reduce dim in the directions of F's flattened output size | 12800 + 320 / 2 = 6560
-h_output_size = 320 # F's flattened output size
+h_input_size = 200#12800 #--!!--NOTICE-- this is the flattening of the concatenated latent spaces - should really be coded to dims * dims    
+h_hidden_size = 100#6560 # reduce dim in the directions of F's flattened output size | 12800 + 320 / 2 = 6560
+h_output_size = 5#320 # F's flattened output size
 
 # J joint (xz) Linear Discriminator dims | 320 is just transforming a few times with same dims for final add (x + xz + z)
-j_input_size = 320
-j_hidden_size = 320 
-j_output_size = 320
+j_input_size = 5#320
+j_hidden_size = 5#320 
+j_output_size = 5#320
 
 #--Choose GAN type--
 DCGAN = False #change to 'False' for BigBiGAN
@@ -224,11 +224,11 @@ class F_Discriminator(nn.Module):
         super(F_Discriminator, self).__init__()
         self.ngpu = ngpu
         # Fill this in
-        self.conv1 = conv(nc, ndf, 4, 2, 1)
-        self.conv2 = conv(ndf, ndf * 2, 4, 2, 1)
-        self.conv3 = conv(ndf * 2, ndf * 4, 4, 2, 1)
-        self.conv4 = conv(ndf * 4, ndf * 8, 4, 2, 1)
-        self.output = conv(ndf * 8, 1, 4, 1, 0, batch_norm=False)
+        self.conv1 = conv(nc, ndf, 3, 1, 1) #changing strides to 1 and keral to 3 for larger out
+        self.conv2 = conv(ndf, ndf * 2, 3, 1, 1)
+        self.conv3 = conv(ndf * 2, ndf * 3, 4, 1, 1)
+        self.conv4 = conv(ndf * 4, ndf * 8, 3, 1, 1)
+        self.output = conv(ndf * 8, 1, 3, 1, 0, batch_norm=False)
 
     def forward(self, input):
         out = F.leaky_relu(self.conv1(input), inplace=True)
@@ -316,10 +316,30 @@ netJ.apply(weights_init)
 # Print the model
 print(netJ)
 
+# Hinge Loss (from: https://github.com/ajbrock/BigGAN-PyTorch/blob/master/losses.py)
+def loss_hinge_dis(dis_real, dis_fake): # reversed input cuz THATS WHY! :-P
+  loss_real = torch.mean(F.relu(1. - dis_real))
+  loss_fake = torch.mean(F.relu(1. + dis_fake))
+  return loss_real, loss_fake
+# def loss_hinge_dis(dis_fake, dis_real): # This version returns a single loss
+  # loss = torch.mean(F.relu(1. - dis_real))
+  # loss += torch.mean(F.relu(1. + dis_fake))
+  # return loss
+  
+def loss_hinge_gen(dis_fake):
+  loss = -torch.mean(dis_fake)
+  return loss
+
+def loss_hinge_enc(dis_real): #added
+  loss = torch.mean(dis_real)
+  return loss
 
 # Initialize BCELoss function (bynary cross entropy loss)
-criterion = nn.BCELoss()
-#criterion = nn.CrossEntropyLoss() #using CE loss to get the model out
+if DCGAN:
+  criterion = nn.BCELoss()
+else: #BigBiGAN
+  #criterion = loss_hinge_dis(*args)
+  pass
 
 # Create batch of latent vectors that we will use to visualize
 #  the progression of the generator
@@ -345,7 +365,7 @@ def create_dir(directory):
         os.makedirs(directory)
 
 create_dir(checkpoint_dir)
-def checkpoint(iteration, G, D, E): #'E's added
+def checkpoint(iteration, G, D, E, H, J): #'E's added
     """
     Saves the parameters of the generator G and discriminator D.
     """
@@ -450,21 +470,23 @@ for epoch in range(num_epochs*25):
               img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
         
         elif BigBiGAN: #used elif for legability and ctrl + f searchability
-
           
-          #---"Autoencoder-like" Section | enc, gen
+          #---"Autoencoder" Section | enc, gen
           
           #--run the encoder--
           ## Training components x -> E(x) batch
+          #netE.zero_grad() #removing to stay true to the pattern >.> especially since I don't really know pytorch >.> lol
           real_cpu = data[0].to(device)
           b_size = real_cpu.size(0)
-          if b_size != batch_size:
-            continue
+#           if b_size != batch_size: #I think I fixed the batch problem, but keeping here just in case
+#             continue
           # Forward pass real batch through D
-          E_output = netE(real_cpu).view(-1)
+          E_output = netE(real_cpu).view(b_size, -1)
 
           #--run the generator--
           ## Training components z -> G(z) batch
+          # Generate batch of latent vectors
+          #netG.zero_grad() #added #removing to stay true to the pattern >.> especially since I don't really know pytorch >.> lol
           noise = torch.randn(b_size, nz, 1, 1, device=device)
           # Generate fake image batch with G
           G_output = fake = netG(noise)
@@ -472,26 +494,28 @@ for epoch in range(num_epochs*25):
           #--combine unary componets X = (x, G(z)), Z = (E(x), z)
           #-Notice the patterns (encoder, generator) for unary compents of BigBiGAN
           x_data = torch.cat((real_cpu, G_output), -1) #assuming NCWH, so concat'ing on H
-          noise = noise.view(-1) #added .view(-1), taking latent space, E_output and now noise, and then flattening it for its discriminator (H)
+          noise = noise.view(b_size, -1)
           z_latents = torch.cat((E_output, noise), -1) #assuming NCWH, so concat'ing on H
           
-
+          #[QUESTION] do we use matmul to get xz to shape x (or z, so can add: x + xz + z)? Or, do we splice add x + xz[:end-of-x], z + xz[start-of-z:]
+          
           #---Unary Discriminators Section | F (which is 'D' here), H
           
+          #--!!--NOTICE: currently training only joint (so no unaries, ie: BiGAN)--!!--
           ## Train with all-real batch
           #--run F on real (ie: X = (x, G(z)))--
           netD.zero_grad()
           x_real_cpu = x_data.to(device)
           b_size = x_real_cpu.size(0)
-          label = torch.full((b_size,), real_label, device=device)
-          x_output = netD(x_real_cpu).view(-1)
+          #label = torch.full((b_size,), real_label, device=device) #not using atm, the label is baked into the hinge losses
+          x_output = netD(x_real_cpu).view(b_size, -1)
           D_X_z1 = x_output.mean().item()
 
           ## Train with all-fake batch
           #--run H on fake (ie: Z = (E(x), z))--
-          netH.zero_grad() #added
-          label.fill_(fake_label)
-          z_output = netH(z_latents.detach()).view(-1)
+          netH.zero_grad()
+          #label.fill_(fake_label) #not using atm, the label is baked into the hinge losses
+          z_output = netH(z_latents.detach()).view(b_size, -1)
           D_Z_z1 = z_output.mean().item()
           
           #---Joint (xz) Discriminator | J
@@ -500,52 +524,44 @@ for epoch in range(num_epochs*25):
           netJ.zero_grad()
           xz_real_cpu = x_output.to(device)
           b_size = xz_real_cpu.size(0)
-          label = torch.full((b_size,), real_label, device=device)
-          xz_output = netJ(xz_real_cpu).view(-1)
-          errD_xz_real = criterion(xz_output, label)
-          errD_xz_real.backward(retain_graph=True)
-          D_X_z0 = xz_output.mean().item()
+          xz_output_real = netJ(xz_real_cpu)#.view(b_size, -1)
           
           #--run J on fake (ie: Z = H_outputs)--
-          label.fill_(fake_label)
-          xz_output = netJ(z_output.detach()).view(-1)
-          errD_xz_fake = criterion(xz_output, label)
+          xz_output_fake = netJ(z_output.detach())#.view(b_size, -1)
+          errD_xz_real_real, errD_xz_fake = loss_hinge_dis(x_output + xz_output_real, z_output) # run real though F and J with only fake from H
+          errD_xz_real, errD_xz_fake_fake = loss_hinge_dis(x_output, xz_output_fake + z_output) # run on only real from F with fake on J with H
+          errD_xz_real = errD_xz_real + errD_xz_real_real # set real = F + J_real
+          errD_xz_fake = errD_xz_fake + errD_xz_fake_fake # set fake = H + J_fake
+          errD_xz_real.backward(retain_graph=True) 
+          D_X_z0 = xz_output_real.mean().item() 
           errD_xz_fake.backward(retain_graph=True)
-          D_Z_z0 = xz_output.mean().item()
+          D_Z_z0 = xz_output_fake.mean().item()
           errD = errD_xz_real + errD_xz_fake # this section is wrong, I'll fix it later
+          # Update J, H, F [Q] does pytorch update all when I update J, or do I need to do H and F? guess we'll see :-P
           optimizerJ.step()
           optimizerH.step()
           optimizerD.step() #D is F
 
-          ############################
-          # (2) Update G (and E) network: maximize log(D(G(z))) (and log(D(E(x)))?)
-          ###########################
           #--updating generator--
           netG.zero_grad()
           label.fill_(real_label)  # fake labels are real for generator cost
-          # Since we just updated D, perform another forward pass of all-fake batch through D
-          output = netH(z_latents).view(-1) #replaced 'fake' with 'G_output', notation change mainly, but remeber that the generator is actually trying to produce 'real'
-          output = netJ(output).view(-1) #add in J
-          # Calculate G's loss based on this output
-          errG = criterion(output, label)
-          # Calculate gradients for G
+          output1 = netH(z_latents).view(b_size, -1) #replaced 'fake' with 'G_output', notation change mainly, but remeber that the generator is actually trying to produce 'real'
+          output2 = netJ(output1).view(b_size, -1) #add in J
+          # ^may want to keep J out and just run on H
+          errG = loss_hinge_gen(output1 + output2) #change to output 1 and 2, was only running off J
           errG.backward(retain_graph=True) # (may be wrong, but moving forward) 'retain_graph=True' to clear "RuntimeError: Trying to backward through the graph a second time, but the buffers have already been freed."
-          D_G_z2 = output.mean().item()
-          # Update G
+          D_G_z2 = output1.mean().item()
           optimizerG.step()
           
           #--updating encoder--
           netE.zero_grad()
           label.fill_(fake_label)  # real labels are fake :-P for encoder cost
-          # Since we just updated D, perform another forward pass of all-real batch through D
-          output = netD(x_data).view(-1) #replaced 'fake' with 'E_output', notation change mainly, but remeber that the encoder is actually trying to produce 'fake' (or, more accurately, "latent space representations")
-          output = netJ(output).view(-1) #add in J
-          # Calculate E's loss based on this output
-          errE = criterion(output, label)
-          # Calculate gradients for E
+          output1 = netD(x_data).view(b_size, -1) #replaced 'fake' with 'E_output', notation change mainly, but remeber that the encoder is actually trying to produce 'fake' (or, more accurately, "latent space representations")
+          output2 = netJ(output1).view(b_size, -1) #add in J
+          # ^may want to keep J out and just run on H
+          errE = loss_hinge_enc(output1 + output2) #change to output 1 and 2, was only running off J
           errE.backward(retain_graph=True)
-          D_E_z2 = output.mean().item()
-          # Update E
+          D_E_z2 = output1.mean().item()
           optimizerE.step()
 
           # Output training stats

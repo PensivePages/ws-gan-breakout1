@@ -20,6 +20,13 @@ from IPython.display import HTML
 
 #base code from AISC GAN Workshop
 
+#--Choose GAN type--
+DCGAN = False #change to 'False' for BigBiGAN
+if not DCGAN:
+  BigBiGAN = True #using elif for legability and ctrl + f searchability
+else:
+  BigBiGAN = False
+
 # Set random seem for reproducibility
 manualSeed = 999
 #manualSeed = random.randint(1, 10000) # use if you want new results
@@ -48,7 +55,10 @@ image_size = 64
 nc = 3
 
 # Size of z latent vector (i.e. size of generator input)
-nz = 100
+if DCGAN:
+  nz = 100
+else: #BigBiGAN
+  nz = 196
 
 # Size of feature maps in generator
 ngf = 64
@@ -57,7 +67,7 @@ ngf = 64
 ndf = 64
 
 # Number of training epochs
-num_epochs = 30#5
+num_epochs = 15#5
 
 # Learning rate for optimizers
 lr = 0.0002
@@ -72,22 +82,29 @@ ngpu = 1
 #channels = # may use this later when I switch to dims * dims
 
 # H (unary: E(x), z) Linear discriminator dims
-h_input_size = 200#12800 #--!!--NOTICE-- this is the flattening of the concatenated latent spaces - should really be coded to dims * dims    
-h_hidden_size = 100#6560 # reduce dim in the directions of F's flattened output size | 12800 + 320 / 2 = 6560
-h_output_size = 5#320 # F's flattened output size
+h_input_size = 196#12800 #--!!--NOTICE-- this is the flattening of the concatenated latent spaces - should really be coded to dims * dims    
+h_hidden_size = 196#6560 # reduce dim in the directions of F's flattened output size | 12800 + 320 / 2 = 6560
+h_output_size = 196#320 # F's flattened output size
 
 # J joint (xz) Linear Discriminator dims | 320 is just transforming a few times with same dims for final add (x + xz + z)
-j_input_size = 5#320
-j_hidden_size = 5#320 
-j_output_size = 5#320
+j_input_size = 392#320
+j_hidden_size = 392#320 
+j_output_size = 392#320
 
-#--Choose GAN type--
-DCGAN = False #change to 'False' for BigBiGAN
-if not DCGAN:
-  BigBiGAN = True #using elif for legability and ctrl + f searchability
+# F score S_x(F(X))
+Sx_input_size = 196
+Sx_hidden_size = 98
+Sx_output_size = 1
 
-#[Q]^ should F, H, J all reduce to 1 for BCE? Or, should only J recuder to 1? Or, should none of them reduce to 1?
-#^ I'm now wondering if "x + xz + z" is symbolic of seperate training of: x on real, z on fake, and xz on both...? They say they train together, so...no? But since the main point is to train the generator wouldn't this do that?
+# H score S_z(H(Z))
+Sz_input_size = 196
+Sz_hidden_size = 98
+Sz_output_size = 1
+
+# J score S_xz(J(F(X), H(Z)))
+Sxz_input_size = 392
+Sxz_hidden_size = 196
+Sxz_output_size = 1
 
 # We can use an image folder dataset the way we have it setup.
 # Create the dataset
@@ -218,29 +235,50 @@ netE.apply(weights_init)
 # Print the model
 print(netE)
 
+if DCGAN:
+  class F_Discriminator(nn.Module):
+      def __init__(self, ngpu, DCGAN):
+          super(F_Discriminator, self).__init__()
+          self.ngpu = ngpu
+          # Fill this in
+          self.conv1 = conv(nc, ndf, 4, 2, 1) #changing strides to 1 and keral to 3 for larger out
+          self.conv2 = conv(ndf, ndf * 2, 4, 2, 1)
+          self.conv3 = conv(ndf * 2, ndf * 4, 4, 2, 1)
+          self.conv4 = conv(ndf * 4, ndf * 8, 4, 2, 1)
+          self.output = conv(ndf * 8, 1, 4, 1, 0, batch_norm=False)
 
-class F_Discriminator(nn.Module):
-    def __init__(self, ngpu, DCGAN):
-        super(F_Discriminator, self).__init__()
-        self.ngpu = ngpu
-        # Fill this in
-        self.conv1 = conv(nc, ndf, 3, 1, 1) #changing strides to 1 and keral to 3 for larger out
-        self.conv2 = conv(ndf, ndf * 2, 3, 1, 1)
-        self.conv3 = conv(ndf * 2, ndf * 3, 4, 1, 1)
-        self.conv4 = conv(ndf * 4, ndf * 8, 3, 1, 1)
-        self.output = conv(ndf * 8, 1, 3, 1, 0, batch_norm=False)
+      def forward(self, input):
+          out = F.leaky_relu(self.conv1(input), inplace=True)
+          out = F.leaky_relu(self.conv2(out), inplace=True)
+          out = F.leaky_relu(self.conv3(out), inplace=True)
+          out = F.leaky_relu(self.conv4(out), inplace=True)
 
-    def forward(self, input):
-        out = F.leaky_relu(self.conv1(input), inplace=True)
-        out = F.leaky_relu(self.conv2(out), inplace=True)
-        out = F.leaky_relu(self.conv3(out), inplace=True)
-        out = F.leaky_relu(self.conv4(out), inplace=True)
-        
-        if DCGAN:
-          return F.sigmoid(self.output(out))
-        else:
-          return F.leaky_relu(self.output(out)) #changed to F.leaky_relu because more appropriate for how layer used as 'F'
+          if DCGAN:
+            return F.sigmoid(self.output(out))
+          else:
+            return F.leaky_relu(self.output(out)) #changed to F.leaky_relu because more appropriate for how layer used as 'F'
+else: #BigBiGAN
+  class F_Discriminator(nn.Module):
+      def __init__(self, ngpu, DCGAN):
+          super(F_Discriminator, self).__init__()
+          self.ngpu = ngpu
+          # Fill this in
+          self.conv1 = conv(nc, ndf, 3, 2, 1) #changing strides to 1 and keral to 3 for larger out
+          self.conv2 = conv(ndf, ndf * 2, 3, 2, 1)
+          self.conv3 = conv(ndf * 2, ndf * 4, 3, 1, 1)
+          self.conv4 = conv(ndf * 4, ndf * 8, 3, 1, 1)
+          self.output = conv(ndf * 8, 1, 3, 1, 0, batch_norm=False)
 
+      def forward(self, input):
+          out = F.leaky_relu(self.conv1(input), inplace=True)
+          out = F.leaky_relu(self.conv2(out), inplace=True)
+          out = F.leaky_relu(self.conv3(out), inplace=True)
+          out = F.leaky_relu(self.conv4(out), inplace=True)
+
+          if DCGAN:
+            return F.sigmoid(self.output(out))
+          else:
+            return F.leaky_relu(self.output(out)) #changed to F.leaky_relu because more appropriate for how layer used as 'F'
 
 # Create the Discriminator
 netD = F_Discriminator(ngpu, DCGAN).to(device)
@@ -255,6 +293,38 @@ netD.apply(weights_init)
 
 # Print the model
 print(netD)
+
+class F_Score(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, ngpu):
+        super(F_Score, self).__init__()
+        self.nonLinearity = torch.nn.LeakyReLU()
+#         self.input = nn.Linear(input_size, hidden_size)
+#         self.hidden = nn.Linear(hidden_size, hidden_size)
+#         self.output = nn.Linear(hidden_size, output_size)
+        self.output = nn.Linear(input_size, output_size)
+
+
+    def forward(self, x):
+#         x = self.nonLinearity(self.input(x))
+#         x = self.nonLinearity( self.hidden(x) )
+        #return self.nonLinearity(self.output(x))
+        #return F.sigmoid(self.output(x))
+        return self.output(x) #returing raw out because sig doesn't seem to make sense to me when score is used with hinge
+
+
+# Create the Discriminator
+scoreF = F_Score(input_size=Sx_input_size, hidden_size=Sx_hidden_size, output_size=Sx_output_size, ngpu=ngpu).to(device)
+
+# Handle multi-gpu if desired
+if (device.type == 'cuda') and (ngpu > 1):
+    scoreF = nn.DataParallel(scoreF, list(range(ngpu)))
+    
+# Apply the weights_init function to randomly initialize all weights
+#  to mean=0, stdev=0.2.
+scoreF.apply(weights_init)
+
+# Print the model
+print(scoreF)
 
 class H_Discriminator(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, ngpu):
@@ -285,11 +355,43 @@ netH.apply(weights_init)
 # Print the model
 print(netH)
 
+class H_Score(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, ngpu):
+        super(H_Score, self).__init__()
+        self.nonLinearity = torch.nn.LeakyReLU()
+#         self.input = nn.Linear(input_size, hidden_size)
+#         self.hidden = nn.Linear(hidden_size, hidden_size)
+#         self.output = nn.Linear(hidden_size, output_size)
+        self.output = nn.Linear(input_size, output_size)
+
+
+    def forward(self, x):
+#         x = self.nonLinearity(self.input(x))
+#         x = self.nonLinearity( self.hidden(x) )
+        #return self.nonLinearity(self.output(x))
+        #return F.sigmoid(self.output(x))
+        return self.output(x) #returing raw out because sig doesn't seem to make sense to me when score is used with hinge
+
+
+# Create the Discriminator
+scoreH = H_Score(input_size=Sz_input_size, hidden_size=Sz_hidden_size, output_size=Sz_output_size, ngpu=ngpu).to(device)
+
+# Handle multi-gpu if desired
+if (device.type == 'cuda') and (ngpu > 1):
+    scoreH = nn.DataParallel(scoreH, list(range(ngpu)))
+    
+# Apply the weights_init function to randomly initialize all weights
+#  to mean=0, stdev=0.2.
+scoreH.apply(weights_init)
+
+# Print the model
+print(scoreH)
+
 class J_Discriminator(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, ngpu):
         super(J_Discriminator, self).__init__()
-        #self.nonLinearity = torch.nn.LeakyReLU()
-        self.nonLinearity = torch.nn.ReLU()
+        self.nonLinearity = torch.nn.LeakyReLU()
+        #self.nonLinearity = torch.nn.ReLU()
         self.input = nn.Linear(input_size, hidden_size)
         self.hidden = nn.Linear(hidden_size, hidden_size)
         self.output = nn.Linear(hidden_size, output_size)
@@ -298,8 +400,8 @@ class J_Discriminator(nn.Module):
     def forward(self, x):
         x = self.nonLinearity(self.input(x))
         x = self.nonLinearity( self.hidden(x) )
-        #return self.nonLinearity(self.output(x))
-        return F.sigmoid(self.output(x))
+        return self.nonLinearity(self.output(x))
+        #return F.sigmoid(self.output(x)) #going back to ReLU atm, because of use of hinge loss
 
 
 # Create the Discriminator
@@ -316,7 +418,40 @@ netJ.apply(weights_init)
 # Print the model
 print(netJ)
 
+class J_Score(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, ngpu):
+        super(J_Score, self).__init__()
+        self.nonLinearity = torch.nn.LeakyReLU()
+#         self.input = nn.Linear(input_size, hidden_size)
+#         self.hidden = nn.Linear(hidden_size, hidden_size)
+#         self.output = nn.Linear(hidden_size, output_size)
+        self.output = nn.Linear(input_size, output_size)
+
+
+    def forward(self, x):
+#         x = self.nonLinearity(self.input(x))
+#         x = self.nonLinearity( self.hidden(x) )
+        #return self.nonLinearity(self.output(x))
+        #return F.sigmoid(self.output(x))
+        return self.output(x) #returing raw out because sig doesn't seem to make sense to me when score is used with hinge
+
+
+# Create the Discriminator
+scoreJ = J_Score(input_size=Sxz_input_size, hidden_size=Sxz_hidden_size, output_size=Sxz_output_size, ngpu=ngpu).to(device)
+
+# Handle multi-gpu if desired
+if (device.type == 'cuda') and (ngpu > 1):
+    scoreJ = nn.DataParallel(scoreJ, list(range(ngpu)))
+    
+# Apply the weights_init function to randomly initialize all weights
+#  to mean=0, stdev=0.2.
+scoreJ.apply(weights_init)
+
+# Print the model
+print(scoreJ)
+
 # Hinge Loss (from: https://github.com/ajbrock/BigGAN-PyTorch/blob/master/losses.py)
+#Note: not in use
 def loss_hinge_dis(dis_real, dis_fake): # reversed input cuz THATS WHY! :-P
   loss_real = torch.mean(F.relu(1. - dis_real))
   loss_fake = torch.mean(F.relu(1. + dis_fake))
@@ -325,20 +460,23 @@ def loss_hinge_dis(dis_real, dis_fake): # reversed input cuz THATS WHY! :-P
   # loss = torch.mean(F.relu(1. - dis_real))
   # loss += torch.mean(F.relu(1. + dis_fake))
   # return loss
-  
+
+#Note: not in use  
 def loss_hinge_gen(dis_fake):
   loss = -torch.mean(dis_fake)
   return loss
 
+#Note: not in use
 def loss_hinge_enc(dis_real): #added
   loss = torch.mean(dis_real)
   return loss
 
 # Initialize BCELoss function (bynary cross entropy loss)
+criterion = nn.BCELoss()
 if DCGAN:
   criterion = nn.BCELoss()
 else: #BigBiGAN
-  #criterion = loss_hinge_dis(*args)
+  #criterion = loss_hinge_dis(*args) moved to BigBiGAN section atm
   pass
 
 # Create batch of latent vectors that we will use to visualize
@@ -355,6 +493,9 @@ optimizerG = optim.Adam(netG.parameters(), lr=lr, betas=(beta1, 0.999))
 optimizerE = optim.Adam(netE.parameters(), lr=lr, betas=(beta1, 0.999)) #added
 optimizerH = optim.Adam(netH.parameters(), lr=lr, betas=(beta1, 0.999)) #added
 optimizerJ = optim.Adam(netJ.parameters(), lr=lr, betas=(beta1, 0.999)) #added
+optimizerSx = optim.Adam(scoreF.parameters(), lr=lr, betas=(beta1, 0.999)) #added
+optimizerSz = optim.Adam(scoreH.parameters(), lr=lr, betas=(beta1, 0.999)) #added
+optimizerSxz = optim.Adam(scoreJ.parameters(), lr=lr, betas=(beta1, 0.999)) #added
 
 checkpoint_dir = '/content/drive/My Drive/ImageNet/Training/'
 
@@ -365,23 +506,41 @@ def create_dir(directory):
         os.makedirs(directory)
 
 create_dir(checkpoint_dir)
-def checkpoint(iteration, G, D, E, H, J): #'E's added
+def checkpoint(iteration, G, D, E, H, J, Sx, Sxz, Sz):
     """
     Saves the parameters of the generator G and discriminator D.
     """
     G_path = os.path.join(checkpoint_dir, 'G.pkl')
-    D_path = os.path.join(checkpoint_dir, 'D.pkl')
+    D_path = os.path.join(checkpoint_dir, 'D.pkl') # F
     E_path = os.path.join(checkpoint_dir, 'E.pkl')
     H_path = os.path.join(checkpoint_dir, 'H.pkl')
     J_path = os.path.join(checkpoint_dir, 'J.pkl')
+    Sx_path = os.path.join(checkpoint_dir, 'Sx.pkl')
+    Sxz_path = os.path.join(checkpoint_dir, 'Sxz.pkl')
+    Sz_path = os.path.join(checkpoint_dir, 'Sz.pkl')
     torch.save(G.state_dict(), G_path)
-    torch.save(D.state_dict(), D_path)
+    torch.save(D.state_dict(), D_path) # F
     torch.save(E.state_dict(), E_path)
     torch.save(H.state_dict(), H_path)
     torch.save(J.state_dict(), J_path)
+    torch.save(Sx.state_dict(), Sx_path)
+    torch.save(Sxz.state_dict(), Sxz_path)
+    torch.save(Sz.state_dict(), Sz_path)
 
 def load_checkpoint(model, checkpoint_name):
     model.load_state_dict(torch.load(os.path.join(checkpoint_dir, checkpoint_name)))
+    
+    
+load = False
+if load: # NOTICE: (untested)
+  load_checkpoint(netG, 'G.pkl')
+  load_checkpoint(netE, 'E.pkl')
+  load_checkpoint(netD, 'F.pkl') # F
+  load_checkpoint(netH, 'H.pkl')
+  load_checkpoint(netJ, 'J.pkl')
+  load_checkpoint(scoreF, 'Sx.pkl')
+  load_checkpoint(scoreH, 'Sxz.pkl')
+  load_checkpoint(scoreJ, 'Sz.pkl')
 
 
     # Training Loop 
@@ -394,6 +553,8 @@ G_losses = []
 D_losses = []
 E_losses = [] #added
 iters = 0
+print_100 = True
+#print_i = 0
 
 print("Starting Training Loop...")
 # For each epoch
@@ -463,132 +624,173 @@ for epoch in range(num_epochs*25):
           G_losses.append(errG.item())
           D_losses.append(errD.item())
 
+#           # Check how the generator is doing by saving G's output on fixed_noise
+#           if (iters % 500 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
+#               with torch.no_grad():
+#                   fake = netG(fixed_noise).detach().cpu()
+#               img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
+
+              
           # Check how the generator is doing by saving G's output on fixed_noise
-          if (iters % 500 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
+          if (iters % 50 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
               with torch.no_grad():
                   fake = netG(fixed_noise).detach().cpu()
               img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
+              if print_100:
+                # Plot the fake images from this epoch
+                plt.subplot(1,2,2)
+                plt.axis("off")
+                plt.title("Fake Images")
+                plt.imshow(np.transpose(img_list[-1],(1,2,0)))
+                plt.show()
         
         elif BigBiGAN: #used elif for legability and ctrl + f searchability
+          #print("BigBiGAN is Under construction")
+          #break
+          ############################
+          # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+          ###########################
           
           #---"Autoencoder" Section | enc, gen
           
           #--run the encoder--
           ## Training components x -> E(x) batch
-          #netE.zero_grad() #removing to stay true to the pattern >.> especially since I don't really know pytorch >.> lol
           real_cpu = data[0].to(device)
           b_size = real_cpu.size(0)
-#           if b_size != batch_size: #I think I fixed the batch problem, but keeping here just in case
-#             continue
-          # Forward pass real batch through D
           E_output = netE(real_cpu).view(b_size, -1)
 
           #--run the generator--
           ## Training components z -> G(z) batch
-          # Generate batch of latent vectors
-          #netG.zero_grad() #added #removing to stay true to the pattern >.> especially since I don't really know pytorch >.> lol
           noise = torch.randn(b_size, nz, 1, 1, device=device)
-          # Generate fake image batch with G
           G_output = fake = netG(noise)
-          
-          #--combine unary componets X = (x, G(z)), Z = (E(x), z)
-          #-Notice the patterns (encoder, generator) for unary compents of BigBiGAN
-          x_data = torch.cat((real_cpu, G_output), -1) #assuming NCWH, so concat'ing on H
-          noise = noise.view(b_size, -1)
-          z_latents = torch.cat((E_output, noise), -1) #assuming NCWH, so concat'ing on H
-          
-          #[QUESTION] do we use matmul to get xz to shape x (or z, so can add: x + xz + z)? Or, do we splice add x + xz[:end-of-x], z + xz[start-of-z:]
           
           #---Unary Discriminators Section | F (which is 'D' here), H
           
-          #--!!--NOTICE: currently training only joint (so no unaries, ie: BiGAN)--!!--
           ## Train with all-real batch
-          #--run F on real (ie: X = (x, G(z)))--
+          #--run F on X (ie: X = (x and G(z)))-- Discriminates between encoder (real) and generator (fake)
           netD.zero_grad()
-          x_real_cpu = x_data.to(device)
-          b_size = x_real_cpu.size(0)
-          #label = torch.full((b_size,), real_label, device=device) #not using atm, the label is baked into the hinge losses
-          x_output = netD(x_real_cpu).view(b_size, -1)
-          D_X_z1 = x_output.mean().item()
+          F_output_real = netD(real_cpu).view(b_size, -1)
+          Sx_real = scoreF(F_output_real)
+          F_output_fake = netD(G_output).view(b_size, -1)
+          Sx_fake = scoreF(F_output_fake)
 
           ## Train with all-fake batch
-          #--run H on fake (ie: Z = (E(x), z))--
+          #--run H on Z (ie: Z = (E(x) and z))-- Discriminates between encoder (real) and generator (fake)
           netH.zero_grad()
-          #label.fill_(fake_label) #not using atm, the label is baked into the hinge losses
-          z_output = netH(z_latents.detach()).view(b_size, -1)
-          D_Z_z1 = z_output.mean().item()
+          H_output_real = netH(E_output.detach()).view(b_size, -1)
+          Sz_real = scoreH(H_output_real)
+          noise = noise.view(b_size, -1) #reshape for H
+          H_output_fake = netH(noise.detach()).view(b_size, -1)
+          Sz_fake = scoreH(H_output_fake)
           
           #---Joint (xz) Discriminator | J
+          xz_input_real = torch.cat((F_output_real, H_output_real), -1)
+          xz_input_fake = torch.cat((F_output_fake, H_output_fake), -1)
           
-          #--run J on real (ie: X = F_outputs)--
+          #--run J on encoder terms (real) (ie: X = (F(x), H(E(x)))-- Discriminates between encoder (real) and generator (fake)
           netJ.zero_grad()
-          xz_real_cpu = x_output.to(device)
+          xz_real_cpu = xz_input_real.to(device)
           b_size = xz_real_cpu.size(0)
-          xz_output_real = netJ(xz_real_cpu)#.view(b_size, -1)
+          J_output_real = netJ(xz_real_cpu)#.view(b_size, -1)
+          Sxz_real = scoreJ(J_output_real)
           
-          #--run J on fake (ie: Z = H_outputs)--
-          xz_output_fake = netJ(z_output.detach())#.view(b_size, -1)
-          errD_xz_real_real, errD_xz_fake = loss_hinge_dis(x_output + xz_output_real, z_output) # run real though F and J with only fake from H
-          errD_xz_real, errD_xz_fake_fake = loss_hinge_dis(x_output, xz_output_fake + z_output) # run on only real from F with fake on J with H
-          errD_xz_real = errD_xz_real + errD_xz_real_real # set real = F + J_real
-          errD_xz_fake = errD_xz_fake + errD_xz_fake_fake # set fake = H + J_fake
-          errD_xz_real.backward(retain_graph=True) 
-          D_X_z0 = xz_output_real.mean().item() 
-          errD_xz_fake.backward(retain_graph=True)
-          D_Z_z0 = xz_output_fake.mean().item()
-          errD = errD_xz_real + errD_xz_fake # this section is wrong, I'll fix it later
-          # Update J, H, F [Q] does pytorch update all when I update J, or do I need to do H and F? guess we'll see :-P
+          #--run J on ganerator terms (fake) (ie: Z = (F(G(z)), H(z)))-- Discriminates between encoder (real) and generator (fake)
+          #print("z_output.size(): ", z_output.size())
+          J_output_fake = netJ(xz_input_fake.detach())#.view(b_size, -1)
+          Sxz_fake = scoreJ(J_output_fake)
+          
+          #--Loss_D  = hinge(y(Sx)) + hinge(y(Sxz)) + hinge(y(Sz)) where y in {-1, 1}
+          #Loss_D_real = F.relu(2. - Sx_real) + F.relu(2. - Sxz_real) + F.relu(2. - Sz_real) + .000001#).view(-1) #havent tested, leads to a "can't interpolate non-scalar error," or something similar
+          #Loss_D_fake = F.relu(2. + Sx_fake) + F.relu(2. + Sxz_fake) + F.relu(2. + Sz_fake) + .000001#).view(-1) #havent tested, leads to a "can't interpolate non-scalar error," or something similar
+          Loss_D_real = F.sigmoid(F.relu(2. - Sx_real) + F.relu(2. - Sxz_real) + F.relu(2. - Sz_real) + .000001).view(-1)
+          Loss_D_fake = F.sigmoid(F.relu(2. + Sx_fake) + F.relu(2. + Sxz_fake) + F.relu(2. + Sz_fake) + .000001).view(-1)
+          label = torch.full((b_size,), real_label, device=device)
+          Loss_D_real = criterion(Loss_D_real, label)
+          Loss_D_real.backward(retain_graph=True)
+          label.fill_(fake_label)
+          Loss_D_fake = criterion(Loss_D_fake, label)
+          Loss_D_fake.backward(retain_graph=True)
+          errXZ = Loss_D_real + Loss_D_fake
+          # Update Sxz, Sz, Sx, J, H, F
+          optimizerSxz.step()
+          optimizerSz.step()
+          optimizerSx.step()
           optimizerJ.step()
           optimizerH.step()
           optimizerD.step() #D is F
 
           #--updating generator--
           netG.zero_grad()
-          label.fill_(real_label)  # fake labels are real for generator cost
-          output1 = netH(z_latents).view(b_size, -1) #replaced 'fake' with 'G_output', notation change mainly, but remeber that the generator is actually trying to produce 'real'
-          output2 = netJ(output1).view(b_size, -1) #add in J
-          # ^may want to keep J out and just run on H
-          errG = loss_hinge_gen(output1 + output2) #change to output 1 and 2, was only running off J
+          label.fill_(real_label)  #trick 
+          #label.fill_(fake_label) #actual
+          outputF = netD(G_output).view(b_size, -1)
+          outputH = netH(noise).view(b_size, -1)
+          xz_input = torch.cat((outputF, outputH), -1)
+          outputJ = netJ(xz_input).view(b_size, -1)
+          Sx = scoreF(outputF)
+          Sz = scoreH(outputH)
+          Sxz = scoreJ(outputJ)
+          #--Loss_EG = y(Sx + Sxz + Sz) where y in {-1, 1}--
+          Loss_EG_fake = F.sigmoid(Sx + Sxz + Sz + .000001).view(-1) #trick
+          #Loss_EG_fake = F.sigmoid(-1 * (Sx + Sxz + Sz + .000001)).view(-1) #actual
+          errG = criterion(Loss_EG_fake, label)
           errG.backward(retain_graph=True) # (may be wrong, but moving forward) 'retain_graph=True' to clear "RuntimeError: Trying to backward through the graph a second time, but the buffers have already been freed."
-          D_G_z2 = output1.mean().item()
+          # Update G
           optimizerG.step()
           
           #--updating encoder--
           netE.zero_grad()
-          label.fill_(fake_label)  # real labels are fake :-P for encoder cost
-          output1 = netD(x_data).view(b_size, -1) #replaced 'fake' with 'E_output', notation change mainly, but remeber that the encoder is actually trying to produce 'fake' (or, more accurately, "latent space representations")
-          output2 = netJ(output1).view(b_size, -1) #add in J
-          # ^may want to keep J out and just run on H
-          errE = loss_hinge_enc(output1 + output2) #change to output 1 and 2, was only running off J
+          label.fill_(fake_label) #trick
+          #label.fill_(real_label) #actual
+          outputF = netD(real_cpu).view(b_size, -1)
+          outputH = netH(E_output).view(b_size, -1)
+          xz_input = torch.cat((outputF, outputH), -1)
+          outputJ = netJ(xz_input).view(b_size, -1)
+          Sx = scoreF(outputF)
+          Sz = scoreH(outputH)
+          Sxz = scoreJ(outputJ)
+          #--Loss_EG = y(Sx + Sxz + Sz) where y in {-1, 1}--
+          Loss_EG_real = F.sigmoid(-1 * (Sx + Sxz + Sz + .000001)).view(-1) #trick
+          #Loss_EG_real = F.sigmoid(Sx + Sxz + Sz + .000001).view(-1) #actual
+          errE = criterion(Loss_EG_real, label)
           errE.backward(retain_graph=True)
-          D_E_z2 = output1.mean().item()
+          # Update E
           optimizerE.step()
-
-          # Output training stats
+          
           if i % 50 == 0:
-              print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_E: %.4f\tLoss_G: %.4f\tD(E(x)): %.4f / %.4f\tD(G(z)): %.4f / %.4f'
+              print('[%d/%d][%d/%d]\tLoss_XZ: %.4f\tLoss_E: %.4f\tLoss_G: %.4f'
                     % (epoch, num_epochs, i, len(dataloader),
-                       errD.item(), errE.item(), errG.item(), D_X_z1, D_E_z2, D_Z_z1, D_G_z2)) #added gradient layers for encoder
+                       errXZ.item(), errE.item(), errG.item()))
 
           # Save Losses for plotting later
           E_losses.append(errE.item()) #added
           G_losses.append(errG.item())
-          D_losses.append(errD.item())
-          #H_losses.append(errH.item()) #not yet in use
-          #J_losses.append(errJ.item()) #not yet in use
+          D_losses.append(errXZ.item()) #now is XZ
 
           # Check how the generator is doing by saving G's output on fixed_noise
-          if (iters % 500 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
+          if (iters % 50 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
               with torch.no_grad():
                   fake = netG(fixed_noise).detach().cpu()
               img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
+              if print_100:
+                # Plot the fake images from this epoch
+                plt.subplot(1,2,2)
+                plt.axis("off")
+                plt.title("Fake Images")
+                plt.imshow(np.transpose(img_list[-1],(1,2,0)))
+                plt.show()
               
           # Check how the encoder is doing by saving E's output on "last real" #added (untested), probably need to hold back a 'constant_real' to feed in
-          #--!!--NOTE: would probably be better to watch netG(netE(real_cpu)) where real_cpu should actually be 'constant_real'
+          #--!!--NOTE: is now netG(netE(real_cpu)), not anything interesting yet in current testing
           if (iters % 500 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
               with torch.no_grad():
                   E_x = netG(netE(real_cpu)).detach().cpu()
               E_img_list.append(vutils.make_grid(E_x, padding=2, normalize=True))
+              
+          # Save progress (untested)
+          if (iters % 10 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
+            checkpoint(iters, netG, netD, netE, netH, netJ, scoreF, scoreH, scoreJ)
+            print("checkpoint created.(check google drive)")
             
         iters += 1
 
@@ -633,7 +835,7 @@ plt.show()
 
 if BigBiGAN:
   # Plot the encoder images from the last epoch
-  # --!!!--Notice: instead of, or in addition to, showing E(x) (to see aht it looks like, because I'm currious :-P), I probably want to do G(E(x))
+  # --!!!--Notice: this is now G(E(x))
   plt.subplot(1,2,2)
   plt.axis("off")
   plt.title("Encoder Images")
@@ -654,7 +856,10 @@ for idx in range(nz):
     z[idx] = values[kdx]
   #print("z: ", z_sample.shape)
   with torch.no_grad():
-    fake = netG(torch.from_numpy(z_sample.reshape((64, 100, 1, 1))).float().to(device)).detach().cpu()
+    if DCGAN:
+      fake = netG(torch.from_numpy(z_sample.reshape((64, 100, 1, 1))).float().to(device)).detach().cpu()
+    else: #BigBiGAN
+      fake = netG(torch.from_numpy(z_sample.reshape((64, 196, 1, 1))).float().to(device)).detach().cpu()
   imgs.append(vutils.make_grid(fake, padding=2, normalize=True))
 
 #%%capture

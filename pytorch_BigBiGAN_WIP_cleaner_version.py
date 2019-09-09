@@ -648,7 +648,7 @@ for epoch in range(num_epochs*25):
           #print("BigBiGAN is Under construction")
           #break
           ############################
-          # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+          # (1) Update D network: maximize log(J(F(x), H(E(x)))) + log(1 - J(F(G(z)), H(z)))
           ###########################
           
           #---"Autoencoder" Section | enc, gen

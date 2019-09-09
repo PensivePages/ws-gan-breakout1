@@ -1,3 +1,6 @@
+from google.colab import drive
+drive.mount('/content/drive')
+
 import tarfile
 from bs4 import BeautifulSoup
 import numpy as np
@@ -59,7 +62,7 @@ mkdir_p("./ImageNet/content/validation/ships") #create the ships folder
 #!mkdir /content/validation/bikes #create the bikes folder
 mkdir_p("./ImageNet/content/validation/bikes") #create the bikes folder
 
-img_rows, img_cols = 32, 32 #number of rows and columns to convert the images to
+img_rows, img_cols = 32, 32 #changed from 32, 32 #number of rows and columns to convert the images to
 input_shape = (img_rows, img_cols, 3)#format to store the images (rows, columns, channels) called channels last
 def url_to_image(url):
     # download the image, convert it to a NumPy array, and then read

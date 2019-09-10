@@ -531,16 +531,17 @@ def load_checkpoint(model, checkpoint_name):
     model.load_state_dict(torch.load(os.path.join(checkpoint_dir, checkpoint_name)))
     
     
-load = False
+load = True
 if load: # NOTICE: (untested)
   load_checkpoint(netG, 'G.pkl')
   load_checkpoint(netE, 'E.pkl')
-  load_checkpoint(netD, 'F.pkl') # F
+  load_checkpoint(netD, 'D.pkl') # F
   load_checkpoint(netH, 'H.pkl')
   load_checkpoint(netJ, 'J.pkl')
   load_checkpoint(scoreF, 'Sx.pkl')
-  load_checkpoint(scoreH, 'Sxz.pkl')
-  load_checkpoint(scoreJ, 'Sz.pkl')
+  load_checkpoint(scoreJ, 'Sxz.pkl')
+  load_checkpoint(scoreH, 'Sz.pkl')
+  print("saved values loaded.")
 
 
     # Training Loop 
